@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>diflett · Changes</title><link rel="stylesheet" href="/style.css"><script defer src="/vendor/highlight.min.js"></script><script defer src="/diff.js"></script><script defer src="/app.js"></script></head>
+<body><header><b class="brand"><span class="mark" aria-hidden="true">±</span> diflett</b><div class="header-controls"><button id="theme" type="button" aria-pressed="true">Dark mode</button><span id="connection" role="status">Connecting</span></div></header>
+<main><aside id="repositories"><h2>Repositories</h2><nav aria-label="Repositories"></nav><button id="open-add">+ Add repository</button></aside><article><button id="sidebar-toggle" type="button" aria-controls="repositories" aria-expanded="true">Hide repositories</button><div class="heading"><h1 id="project">Working tree</h1><span id="branch"></span></div><p id="path"></p><div class="toolbar"><div class="tabs" aria-label="Change groups"></div><div id="layout" role="group" aria-label="Diff layout"><button data-mode="single">Single pane</button><button data-mode="dual">Dual pane</button></div></div><section id="diff" aria-label="Git changes"></section></article></main>
+<dialog id="add-dialog" aria-labelledby="add-title"><form id="add-form">
+<h2 id="add-title">Add repository</h2><label for="repo-path">Local repository path</label>
+<input id="repo-path" type="text" required autofocus placeholder="/path/to/project" autocomplete="off" spellcheck="false">
+<p id="add-error" role="alert"></p><div class="actions"><button id="cancel" type="button">Cancel</button><button id="submit-add">Add repository</button></div>
+</form></dialog></body></html>
