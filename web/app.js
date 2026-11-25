@@ -48,11 +48,23 @@ sidebarToggle.onclick = () => {
 };
 
 function paint() {
-  $('#layout').hidden = group === 'Untracked';
+  const hasProject = selected !== undefined;
+  $('.toolbar').hidden = !hasProject;
+  $('#layout').hidden = !hasProject || group === 'Untracked';
   for (const b of $('#layout').children) b.setAttribute('aria-pressed', b.dataset.mode === layout);
   const container = $('#diff');
   container.replaceChildren();
   for (const btn of $('.tabs').children) btn.setAttribute('aria-pressed', btn.textContent === group);
+  if (!hasProject) {
+    const box = node('div', undefined, 'empty empty-state');
+    box.append(node('p', 'No repositories are being watched yet. Add a local Git repository to view working-tree changes.'));
+    const btn = node('button', '+ Add repository', 'empty-action');
+    btn.type = 'button';
+    btn.onclick = openAdd;
+    box.append(btn);
+    container.append(box);
+    return;
+  }
   if (!snapshot || snapshot.Error) {
     container.append(node('p', snapshot?.Error || 'Reading repository…', 'empty'));
     return;
@@ -61,9 +73,15 @@ function paint() {
   if (!data?.length) {
     container.append(node('p', group === 'Untracked' ? 'No untracked files.' : 'No ' + group.toLowerCase() + ' changes.', 'empty'));
   } else if (group === 'Untracked') {
-    const list = node('ul', undefined, 'files');
-    for (const path of data) list.append(node('li', path));
-    container.append(list);
+    for (const file of data) {
+      const key = JSON.stringify([selected, group, file.Path]);
+      const card = node('details');
+      card.open = !folded.has(key);
+      card.append(node('summary', file.Path));
+      card.ontoggle = () => { if (card.isConnected) card.open ? folded.delete(key) : folded.add(key); };
+      card.append(renderUntracked(file));
+      container.append(card);
+    }
   } else {
     const visibleFiles = new Set();
     for (const block of data.replace(/\n$/, '').split(/\n(?=diff --git )/)) {
@@ -111,9 +129,10 @@ function renderProjects() {
   });
 }
 const dialog = $('#add-dialog');
-$('#open-add').onclick = () => {
+function openAdd() {
   $('#add-error').textContent = ''; $('#add-form').reset(); dialog.showModal();
-};
+}
+$('#open-add').onclick = openAdd;
 $('#cancel').onclick = () => dialog.close();
 $('#add-form').onsubmit = async event => {
   event.preventDefault();
@@ -143,6 +162,14 @@ async function start() {
   for (const b of $('#layout').children) b.onclick = () => {
     layout = b.dataset.mode; localStorage.setItem('diflett.layout', layout); paint();
   };
-  select(0);
+  if (projects.length) {
+    select(0);
+  } else {
+    $('#project').textContent = 'No repository selected';
+    $('#branch').textContent = '';
+    $('#path').textContent = 'Add a local Git repository to start watching changes.';
+    status('No repositories');
+    paint();
+  }
 }
 start().catch(() => status('Unable to load repositories'));

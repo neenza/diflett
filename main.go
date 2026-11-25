@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -23,16 +24,31 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 //go:embed web/*
 var assets embed.FS
 
+const (
+	maxUntrackedFileBytes  = 128 * 1024
+	maxUntrackedTotalBytes = 512 * 1024
+)
+
+type untrackedFile struct {
+	Path      string
+	Content   string `json:",omitempty"`
+	Size      int64  `json:",omitempty"`
+	Binary    bool   `json:",omitempty"`
+	Truncated bool   `json:",omitempty"`
+	Note      string `json:",omitempty"`
+}
+
 type snapshot struct {
 	Branch    string
 	Staged    string
 	Unstaged  string
-	Untracked []string
+	Untracked []untrackedFile
 	Error     string
 }
 
@@ -72,6 +88,53 @@ func git(ctx context.Context, root string, args ...string) (string, bool, error)
 	}
 	return out.buf.String(), out.clipped, nil
 }
+func readUntrackedFile(root, relPath string, budget int) (untrackedFile, int) {
+	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return untrackedFile{Path: relPath, Note: err.Error()}, 0
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return untrackedFile{Path: relPath, Note: err.Error()}, 0
+		}
+		return untrackedFile{Path: relPath, Note: "Symbolic link -> " + target}, 0
+	}
+	if !info.Mode().IsRegular() {
+		return untrackedFile{Path: relPath, Note: "Non-regular file"}, 0
+	}
+	if budget <= 0 {
+		return untrackedFile{Path: relPath, Note: "[Content omitted: 512 KiB untracked limit reached]"}, 0
+	}
+	limit := min(maxUntrackedFileBytes, budget)
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return untrackedFile{Path: relPath, Note: err.Error()}, 0
+	}
+	defer f.Close()
+	buf, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil {
+		return untrackedFile{Path: relPath, Note: err.Error()}, 0
+	}
+	truncated := len(buf) > limit
+	if truncated {
+		buf = buf[:limit]
+	}
+	if bytes.IndexByte(buf, 0) >= 0 {
+		return untrackedFile{Path: relPath, Binary: true, Size: info.Size()}, 0
+	}
+	if truncated && !utf8.Valid(buf) {
+		for i := 1; i <= 3 && i <= len(buf); i++ {
+			if utf8.Valid(buf[:len(buf)-i]) {
+				buf = buf[:len(buf)-i]
+				break
+			}
+		}
+	}
+	return untrackedFile{Path: relPath, Content: string(buf), Truncated: truncated}, len(buf)
+}
+
 func scan(ctx context.Context, root string) (s snapshot) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -112,10 +175,15 @@ func scan(ctx context.Context, root string) (s snapshot) {
 		return
 	}
 	if end := strings.LastIndexByte(names, 0); end >= 0 {
-		s.Untracked = strings.Split(names[:end], "\x00")
+		budget := maxUntrackedTotalBytes
+		for _, name := range strings.Split(names[:end], "\x00") {
+			file, used := readUntrackedFile(root, name, budget)
+			budget -= used
+			s.Untracked = append(s.Untracked, file)
+		}
 	}
 	if clipped {
-		s.Untracked = append(s.Untracked, "[File list truncated at 256 KiB]")
+		s.Untracked = append(s.Untracked, untrackedFile{Path: "[File list truncated at 256 KiB]", Note: "Additional untracked files were omitted."})
 	}
 	return
 }
@@ -186,9 +254,6 @@ func main() {
 		log.Fatal("interval must be positive")
 	}
 	paths := flag.Args()
-	if len(paths) == 0 {
-		paths = []string{"."}
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var mu sync.RWMutex
@@ -213,9 +278,15 @@ func main() {
 		go p.watch(ctx, *interval)
 		return len(projects) - 1, nil
 	}
-	for _, path := range paths {
-		if _, err := addProject(ctx, path); err != nil {
-			log.Fatalf("%s: %v", path, err)
+	if len(paths) == 0 {
+		if _, err := addProject(ctx, "."); err != nil && errors.Is(err, exec.ErrNotFound) {
+			log.Fatalf("git: %v", err)
+		}
+	} else {
+		for _, path := range paths {
+			if _, err := addProject(ctx, path); err != nil {
+				log.Fatalf("%s: %v", path, err)
+			}
 		}
 	}
 	mux := http.NewServeMux()

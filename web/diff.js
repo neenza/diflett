@@ -192,3 +192,35 @@ function renderDiff(lines, paths, layout, context) {
   if (oldNumber !== undefined && trailingContext >= 3) gap(oldNumber, newNumber, Infinity);
   return view;
 }
+
+function renderUntracked(file) {
+  const view = node('div', undefined, 'code');
+  const body = node('div', undefined, 'lines');
+  view.append(body);
+  if (file.Note) {
+    body.append(node('div', file.Note, 'line meta'));
+    return view;
+  }
+  if (file.Binary) {
+    body.append(node('div', `Binary file not shown (${file.Size || 0} bytes)`, 'line meta'));
+    return view;
+  }
+  if (!file.Content) {
+    body.append(node('div', 'Empty file', 'line meta'));
+    return view;
+  }
+  const lines = file.Content.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+  const entries = lines.map((text, i) => ({text, num: i + 1}));
+  highlightSide(entries, sourceLanguage(file.Path), 'after');
+  for (const entry of entries) {
+    const row = node('div', undefined, 'source-cell unified');
+    const content = node('span', undefined, 'source-text');
+    content.append(entry.after || document.createTextNode(entry.text));
+    row.append(node('span', String(entry.num), 'gutter'), content);
+    body.append(row);
+  }
+  if (file.Truncated) {
+    body.append(node('div', '[File truncated]', 'line meta'));
+  }
+  return view;
+}
